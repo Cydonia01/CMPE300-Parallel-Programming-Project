@@ -1,24 +1,35 @@
 import math
 from mpi4py import MPI
 
+# superclass for all units
 class Unit:
     def __init__(self, x, y, unitName):
         self.x = x
         self.y = y
         self.healing = 0
-        self.unitName = unitName     
+        self.unitName = unitName
            
     def attack(self, grid):
-        pass
+        target_positions = []
+        
+        for direction in self.attackPattern:
+            target_y = self.y + direction[0]
+            target_x = self.x + direction[1]
+            
+            if target_y < N and target_y >= 0 and target_x < N and target_x >= 0 and grid[target_y][target_x] != "." and not isinstance(grid[target_y][target_x], type(self)):
+                target_positions.append((self.y, self.x, target_y, target_x, self.attackPower, self.unitName))
+                
+        return target_positions
     
     def applyDamage(self, damage):
-        pass
+        self.health -= damage
     
     def heal(self):
-        pass
+        self.health = min(self.health + self.healingRate, self.maxHealth)
+        self.healing = 0
 
-class Earth:
-    # Constants
+class Earth(Unit):
+    # constants
     attackPower = 2
     maxHealth = 18
     healingRate = 3
@@ -29,69 +40,40 @@ class Earth:
         super().__init__(x, y, unitName)
         self.health = 18
         
-    def attack(self, grid):
-        target_positions = []
-        for direction in self.attackPattern:
-            target_y = self.y + direction[0]
-            target_x = self.x + direction[1]
-            if target_y < N and target_y >= 0 and target_x < N and target_x >= 0 and grid[target_y][target_x] != "." and not isinstance(grid[target_y][target_x], Earth):
-                target_positions.append((self.y, self.x, target_y, target_x, self.attackPower, "Earth"))
-        return target_positions
-    
     def applyDamage(self, damage):
         self.health -= int(damage * self.damageReduction)
         
-    def heal(self):
-        self.health = min(self.health + self.healingRate, self.maxHealth)
-        self.healing = 0
-                
         
-class Fire:
+class Fire(Unit):
+    # constants
     maxAttackPower = 6
     maxHealth = 12
     healingRate = 1
     attackPattern = [(0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
+    
+    def __init__(self, x, y, unitName):
+        super().__init__(x, y, unitName)
         self.health = 12
         self.attackPower = 4
-        self.healing = 0
-        
-    def attack(self, grid):
-        target_positions = []
-        for direction in self.attackPattern:
-            target_y = self.y + direction[0]
-            target_x = self.x + direction[1]
-            if target_y < N and target_y >= 0 and target_x < N and target_x >= 0 and grid[target_y][target_x] != "." and not isinstance(grid[target_y][target_x], Fire):
-                target_positions.append((self.y, self.x, target_y, target_x, self.attackPower, "Fire"))
-        return target_positions
         
     def increaseAttack(self):
         self.attackPower = min(self.attackPower + 1, self.maxAttackPower)
         
     def resetAttack(self):
         self.attackPower = 4
+    
         
-    def applyDamage(self, damage):
-        self.health -= damage
-        
-    def heal(self):
-        self.health = min(self.health + self.healingRate, self.maxHealth)
-        self.healing = 0
-        
-class Water:
+class Water(Unit):
+    # constants
     attackPower = 3
     maxHealth = 14
     healingRate = 2
     attackPattern = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
     adjacentCells = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, -1)]
     
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
+    def __init__(self, x, y, unitName):
+        super().__init__(x, y, unitName)
         self.health = 14
-        self.healing = 0
     
     def flood(self):
         for direction in self.adjacentCells:
@@ -99,36 +81,19 @@ class Water:
             target_x = self.x + direction[1]
             if target_y < N and target_y >= 0 and target_x < N and target_x >= 0:
                 if grid[target_y][target_x] == ".":
-                    grid[target_y][target_x] = Water(target_x, target_y)
+                    grid[target_y][target_x] = Water(target_x, target_y, "Water")
                     break
-
-    def attack(self, grid):
-        target_positions = []
-        for direction in self.attackPattern:
-            target_y = self.y + direction[0]
-            target_x = self.x + direction[1]
-            if target_y < N and target_y >= 0 and target_x < N and target_x >= 0 and grid[target_y][target_x] != "." and not isinstance(grid[target_y][target_x], Water):
-                target_positions.append((self.y, self.x,target_y, target_x, self.attackPower, "Water"))
-        return target_positions
-    
-    def applyDamage(self, damage):
-        self.health -= damage
-    
-    def heal(self):
-        self.health = min(self.health + self.healingRate, self.maxHealth)
-        self.healing = 0
         
-class Air:
+class Air(Unit):
+    # constants
     attackPower = 2
     maxHealth = 10
     healingRate = 2
     attackAndMovePattern = [(0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
     
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
+    def __init__(self, x, y, unitName):
+        super().__init__(x, y, unitName)
         self.health = 10
-        self.healing = 0
     
     def attack(self, grid):
         target_positions = []
@@ -177,15 +142,8 @@ class Air:
                     break
         return num_units
     
-    def applyDamage(self, damage):
-        self.health -= damage
-    
-    def heal(self):
-        self.health = min(self.health + self.healingRate, self.maxHealth)
-        self.healing = 0
-        
-    
 # Read a wave from the file and update the grid
+#!!! clean at the end!!!
 def read_wave(file, grid):
     line = file.readline()
     for _ in range(4):
@@ -198,28 +156,28 @@ def read_wave(file, grid):
                 if grid[y][x] != ".":
                     print("Error: Earth on Earth")
                 else:
-                    grid[y][x] = (Earth(x, y))
+                    grid[y][x] = (Earth(x, y, "Earth"))
             elif line[0] == 'F':
                 if grid[y][x] != ".":
                     print("Error: Fire on Fire")
                 else:
-                    grid[y][x] = (Fire(x, y))
+                    grid[y][x] = (Fire(x, y, "Fire"))
             elif line[0] == 'W':
                 if grid[y][x] != ".":
                     print("Error: Water on Water")
                 else:
-                    grid[y][x] = (Water(x, y))
+                    grid[y][x] = (Water(x, y, "Water"))
             elif line[0] == 'A':
                 if grid[y][x] != ".":
                     print("Error: Air on Air")
                 else:
-                    grid[y][x] = (Air(x, y))        
+                    grid[y][x] = (Air(x, y, "Air"))        
         
 def print_grid(grid):
     for y in range(len(grid)):
         for x in range(len(grid[y])):
             if grid[y][x] != ".":
-                # print(grid[y][x].health, end=" ")
+                print(grid[y][x].health, end=" ")
                 if isinstance(grid[y][x], Earth):
                     print("E", end=" ")
                 elif isinstance(grid[y][x], Fire):
@@ -243,7 +201,7 @@ def send_sub_grid():
 def recv_sub_grids(grid):
     for worker_rank in range(1, num_workers + 1):
         sub_grid = comm.recv(source=worker_rank)
-        start_index_y, start_index_x, offset = worker_partitions[worker_rank]
+        start_index_x, start_index_y, offset = worker_partitions[worker_rank]
         for y in range(start_index_y, start_index_y + offset):
             for x in range(start_index_x, start_index_x + offset):
                 grid[y][x] = sub_grid[y - start_index_y][x - start_index_x]
@@ -257,14 +215,9 @@ W = int(parameters[1]) # Number of Waves
 T = int(parameters[2]) # Number of units per faction per wave
 R = int(parameters[3]) # Number of rounds per wave
 
-# Reading the grid
+# creating the grid
 grid = [["." for i in range(N)] for j in range(N)]
     
-# # read as many waves as there are
-# for _ in range(W):
-
-
-
 # Initialize MPI
 comm = MPI.COMM_WORLD
 
@@ -281,12 +234,15 @@ workers_per_row = int(math.sqrt(num_workers))
 
 for _ in range(1):
     read_wave(file, grid)
+    
+    if rank == 0:
+        pass
+        # print("Initial State")
+        # print_grid(grid)
+        # print()
     # Checkered partitioning
     for _ in range(4):
         if rank == 0:
-            print_grid(grid)
-            print()
-            print()
             for worker_rank in range(1, num_workers + 1):
                 start_index_y = size_per_rank * ((worker_rank - 1) // workers_per_row)
                 start_index_x = size_per_rank * ((worker_rank - 1) % workers_per_row)
@@ -307,24 +263,23 @@ for _ in range(1):
             for y in range(start_index_y, start_index_y + offset):
                 for x in range(start_index_x, start_index_x + offset):
                     if isinstance(grid[y][x], Air):
-                        new_y, new_x = grid[y][x].move(grid)
+                        air_unit = grid[y][x]
+                        new_y, new_x = air_unit.move(grid)
                         if new_y < start_index_y + offset and new_y >= start_index_y and new_x < start_index_x + offset and new_x >= start_index_x:
+                            next_pos = grid[new_y][new_x]
                             if new_y == y and new_x == x:
                                 pass
-                            elif grid[new_y][new_x] == ".":
+                            elif next_pos == ".":
                                 # print("Air is moving to", new_y, new_x)
-                                grid[y][x].y = new_y
-                                grid[y][x].x = new_x
-                                grid[new_y][new_x] = grid[y][x]
+                                air_unit.y = new_y
+                                air_unit.x = new_x
+                                grid[new_y][new_x] = air_unit
                                 grid[y][x] = "."
-                            elif isinstance(grid[new_y][new_x], Air):
+                            elif isinstance(next_pos, Air):
                                 # print("Air is merging at ", new_y, new_x)
-                                grid[new_y][new_x].health = min(grid[new_y][new_x].health + grid[y][x].health, 10)
-                                grid[new_y][new_x].attackPower += grid[y][x].attackPower
+                                next_pos.health = min(next_pos.health + air_unit.health, 10)
+                                next_pos.attackPower += air_unit.attackPower
                                 grid[y][x] = "."
-                        else:
-                            pass
-                            # comm.send(next_position, dest=0)
             
             send_sub_grid()
         else:
@@ -343,7 +298,6 @@ for _ in range(1):
         else:
             grid = comm.recv(source=0)
 
-            start_index_y, start_index_x, offset = worker_partition
             unitAttackQueue = []
             for y in range(start_index_y, start_index_y + offset):
                 for x in range(start_index_x, start_index_x + offset):
@@ -371,21 +325,24 @@ for _ in range(1):
                         workerAttackQueue.append(attack)
                 comm.send(workerAttackQueue, dest=worker_rank)
             
-            
             recv_sub_grids(grid)
         else:
             workerAttackQueue = comm.recv(source=0)
+            
             while len(workerAttackQueue) > 0:
                 attack_instance = workerAttackQueue.pop(0)
                 source_y, source_x, dest_y, dest_x, damage, attacker = attack_instance
                 attacker_unit = grid[source_y][source_x]
                 attacked_unit = grid[dest_y][dest_x]
+                
                 if attacked_unit != ".":
                     attacked_unit.applyDamage(damage)
+                # 2 atackerden biri fire olursa ve son vuruşu atmamasına rağmen ölmüşse atackerin gücünü arttır
                 if attacker_unit == "Fire" and attacked_unit.health <= 0:
                     attacker_unit.increaseAttack()
                 if attacked_unit != "." and attacked_unit.health <= 0:
                     grid[dest_y][dest_x] = "."
+                
             send_sub_grid()
             
         comm.Barrier()
@@ -393,10 +350,12 @@ for _ in range(1):
         if rank == 0:
             for worker_rank in range(1, num_workers + 1):
                 comm.send(grid, dest=worker_rank)
+                
             recv_sub_grids(grid)
+        
         else:
             grid = comm.recv(source=0)
-            start_index_y, start_index_x, offset = worker_partition
+            
             for y in range(start_index_y, start_index_y + offset):
                 for x in range(start_index_x, start_index_x + offset):
                     if grid[y][x] != ".":
@@ -406,24 +365,34 @@ for _ in range(1):
             
             send_sub_grid()
 
-        comm.Barrier()
-
-    # end phase
+    comm.Barrier()
+    
+    # threadler arası komünikasyon lazım. 4 ten 2 ye geçiyor parentı iptal et.
+    # Wave ending
     if rank == 0:
-        print("Wave completed")
-        for y in range(N):
-            for x in range(N):
+        for worker_rank in range(1, num_workers + 1):
+            comm.send(grid, dest=worker_rank)
+        
+        recv_sub_grids(grid)
+
+    else:
+        grid = comm.recv(source=0)
+        for y in range(start_index_y, start_index_y + offset):
+            for x in range(start_index_x, start_index_x + offset):
                 if isinstance(grid[y][x], Fire):
                     grid[y][x].resetAttack()
                 if isinstance(grid[y][x], Water):
                     grid[y][x].flood()
-                    
-        for worker_rank in range(1, num_workers + 1):
-            comm.send(grid, dest=worker_rank)
-        print_grid(grid)
-        print()
-    else:
-        grid = comm.recv(source=0)
+        send_sub_grid()
         
     comm.Barrier()
+    if rank == 0:
+        for worker_rank in range(1, num_workers + 1):
+            comm.send(grid, dest=worker_rank)
+    else:
+        grid = comm.recv(source=0)
+    
+    comm.Barrier()
+    
+    
 file.close()
