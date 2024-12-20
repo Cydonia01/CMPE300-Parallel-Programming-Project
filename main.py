@@ -95,19 +95,21 @@ class Air(Unit):
         super().__init__(x, y, unitName)
         self.health = 10
     
+    
+    # returns the coordinates of the units that can be attacked. Also, it is used for counting the number of attackable units
     def attack(self, grid):
         target_positions = []
         for direction in self.attackAndMovePattern:
             target_y = self.y + direction[0]
             target_x = self.x + direction[1]
-            while target_y < N and target_y >= 0 and target_x < N and target_x >= 0:
-                if grid[target_y][target_x] == ".":
-                    target_y += direction[0]
-                    target_x += direction[1]
-                else:
-                    if not isinstance(grid[target_y][target_x], Air):
+            for _ in range(2):
+                if target_y < N and target_y >= 0 and target_x < N and target_x >= 0:
+                    if grid[target_y][target_x] == ".":
+                        target_y += direction[0]
+                        target_x += direction[1]
+                    elif not isinstance(grid[target_y][target_x], Air):
                         target_positions.append((self.y, self.x, target_y, target_x, self.attackPower, "Air"))
-                    break
+                        break
 
         return target_positions
     
@@ -126,21 +128,22 @@ class Air(Unit):
         next_y = sorted_new_positions[0][0]
         next_x = sorted_new_positions[0][1]
         return next_y, next_x
-                    
+
     def count_attackable_units(self, grid, y, x):
         num_units = 0
         for direction in self.attackAndMovePattern:
             new_y = y + direction[0]
             new_x = x + direction[1]
-            while new_y < N and new_y >= 0 and new_x < N and new_x >= 0:
-                if grid[new_y][new_x] == ".":
-                    new_y += direction[0]
-                    new_x += direction[1]
-                else:
-                    if not isinstance(grid[new_y][new_x], Air):
+            for _ in range(2):
+                if new_y < N and new_y >= 0 and new_x < N and new_x >= 0:
+                    if grid[new_y][new_x] == ".":
+                        new_y += direction[0]
+                        new_x += direction[1]
+                    elif not isinstance(grid[new_y][new_x], Air):
                         num_units += 1
-                    break
+                        break
         return num_units
+
     
 # Read a wave from the file and update the grid
 #!!! clean at the end!!!
@@ -178,6 +181,7 @@ def print_grid(grid):
         for x in range(len(grid[y])):
             if grid[y][x] != ".":
                 print(grid[y][x].health, end=" ")
+                continue
                 if isinstance(grid[y][x], Earth):
                     print("E", end=" ")
                 elif isinstance(grid[y][x], Fire):
@@ -243,6 +247,7 @@ for _ in range(1):
     # Checkered partitioning
     for _ in range(4):
         if rank == 0:
+            print_grid(grid)
             for worker_rank in range(1, num_workers + 1):
                 start_index_y = size_per_rank * ((worker_rank - 1) // workers_per_row)
                 start_index_x = size_per_rank * ((worker_rank - 1) % workers_per_row)
@@ -303,10 +308,14 @@ for _ in range(1):
                 for x in range(start_index_x, start_index_x + offset):
                     if grid[y][x] != ".":
                         unit = grid[y][x]
+                        temp = unit.attack(grid)
+                        
                         if unit.health < unit.maxHealth / 2:
                             unit.healing = 1
+                        elif len(temp) == 0:
+                            unit.healing = 1
                         else:
-                            unitAttackQueue += unit.attack(grid)
+                            unitAttackQueue += temp
             comm.send(unitAttackQueue, dest=0)
 
         comm.Barrier()
@@ -329,24 +338,26 @@ for _ in range(1):
         else:
             workerAttackQueue = comm.recv(source=0)
             
-            while len(workerAttackQueue) > 0:
-                attack_instance = workerAttackQueue.pop(0)
+            for attack_instance in workerAttackQueue:
                 source_y, source_x, dest_y, dest_x, damage, attacker = attack_instance
-                attacker_unit = grid[source_y][source_x]
                 attacked_unit = grid[dest_y][dest_x]
-                
-                if attacked_unit != ".":
-                    attacked_unit.applyDamage(damage)
-                # 2 atackerden biri fire olursa ve son vuruşu atmamasına rağmen ölmüşse atackerin gücünü arttır
-                if attacker_unit == "Fire" and attacked_unit.health <= 0:
-                    attacker_unit.increaseAttack()
-                if attacked_unit != "." and attacked_unit.health <= 0:
+                attacked_unit.applyDamage(damage)
+            
+            for attack_instance in workerAttackQueue:
+                source_y, source_x, dest_y, dest_x, damage, attacker = attack_instance
+                attacked_unit = grid[dest_y][dest_x]
+                attacker_unit = grid[source_y][source_x]                
+                if grid[dest_y][dest_x] != "." and attacked_unit.health <= 0:
                     grid[dest_y][dest_x] = "."
+                    if isinstance(attacker_unit, Fire):
+                        attacker_unit.increaseAttack()
                 
             send_sub_grid()
             
         comm.Barrier()
 
+
+        # healing phase
         if rank == 0:
             for worker_rank in range(1, num_workers + 1):
                 comm.send(grid, dest=worker_rank)
@@ -364,12 +375,14 @@ for _ in range(1):
                             unit.heal()
             
             send_sub_grid()
+        
 
     comm.Barrier()
     
     # threadler arası komünikasyon lazım. 4 ten 2 ye geçiyor parentı iptal et.
     # Wave ending
     if rank == 0:
+        print_grid(grid)
         for worker_rank in range(1, num_workers + 1):
             comm.send(grid, dest=worker_rank)
         
@@ -393,6 +406,6 @@ for _ in range(1):
         grid = comm.recv(source=0)
     
     comm.Barrier()
-    
+
     
 file.close()
