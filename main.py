@@ -227,8 +227,8 @@ def print_grid(grid):
     for y in range(len(grid)):
         for x in range(len(grid[y])):
             if grid[y][x] != ".":
-                print(grid[y][x].health, end=" ")
-                continue
+                # print(grid[y][x].health, end=" ")
+                # continue
                 if isinstance(grid[y][x], Earth):
                     print("E", end=" ")
                 elif isinstance(grid[y][x], Fire):
@@ -418,9 +418,20 @@ for _ in range(2):
             current_worker_neighbor = find_neighbors(worker_grid)
             neighbor_grids = {}
 
+            send_requests = []
+            recv_requests = []
+            
+            # Post all sends and receives
             for neighbor in current_worker_neighbor:
-                comm.send(worker_grid, dest=neighbor)
-                neighbor_grids[neighbor] = (comm.recv(source=neighbor))
+                send_requests.append(comm.isend(worker_grid, dest=neighbor))
+                recv_requests.append(comm.irecv(source=neighbor))
+            
+            # Wait for all communications to complete
+            MPI.Request.waitall(send_requests)
+            
+            # Get received grids
+            for i, neighbor in enumerate(current_worker_neighbor):
+                neighbor_grids[neighbor] = recv_requests[i].wait()
 
             movements = compute_movements(worker_grid, neighbor_grids)
             waiting_data = fill_waiting_data(movements)
@@ -430,14 +441,11 @@ for _ in range(2):
 
             for neighbor_2 in neighbor_grids:
                 waiting_data += comm.recv(source=neighbor_2)
-        else:
-            current_worker_neighbor = {}
         comm.Barrier()
 
         if rank != 0:
             for movement in movements:
                 y, x, new_y, new_x = movement
-                print("Rank", rank, "moving", y, x, "to", new_y, new_x)
                 air_unit = worker_grid[y][x]
                 next_pos = worker_grid[new_y][new_x]
                 if new_y >= 0 and new_y < offset and new_x >= 0 and new_x < offset:
@@ -475,12 +483,22 @@ for _ in range(2):
                         next_pos.attackPower += air_unit.attackPower
         comm.Barrier()
         if rank != 0:
-            for neighbor in neighbor_grids:
-                comm.send(worker_grid, dest=neighbor)
-                neighbor_grids[neighbor] = comm.recv(source=neighbor)
+            send_requests = []
+            recv_requests = []
+            
+            # Post all sends and receives
+            for neighbor in current_worker_neighbor:
+                send_requests.append(comm.isend(worker_grid, dest=neighbor))
+                recv_requests.append(comm.irecv(source=neighbor))
+            
+            # Wait for all communications to complete
+            MPI.Request.waitall(send_requests)
+            
+            # Get received grids
+            for i, neighbor in enumerate(current_worker_neighbor):
+                neighbor_grids[neighbor] = recv_requests[i].wait()
             
         comm.Barrier()
-        
         # Attack phase
         if rank != 0:
             unitAttackQueue = []
@@ -515,13 +533,22 @@ for _ in range(2):
             # print(unitAttackQueue)
             
         comm.Barrier()
-
-        # if rank != 0:
-        #     for neighbor in neighbor_grids:
-        #         comm.send(worker_grid, dest=neighbor)
-        #         neighbor_grids[neighbor] = comm.recv(source=neighbor)
-                
-        # comm.Barrier()
+        if rank != 0:
+            send_requests = []
+            recv_requests = []
+            
+            # Post all sends and receives
+            for neighbor in current_worker_neighbor:
+                send_requests.append(comm.isend(worker_grid, dest=neighbor))
+                recv_requests.append(comm.irecv(source=neighbor))
+            
+            # Wait for all communications to complete
+            MPI.Request.waitall(send_requests)
+            
+            # Get received grids
+            for i, neighbor in enumerate(current_worker_neighbor):
+                neighbor_grids[neighbor] = recv_requests[i].wait()
+        comm.Barrier()
 
         # Resolution phase
         if rank != 0:
@@ -561,7 +588,22 @@ for _ in range(2):
                     attacked_unit.applyDamage(damage)
 
         comm.Barrier()
-
+        if rank != 0:
+            send_requests = []
+            recv_requests = []
+            
+            # Post all sends and receives
+            for neighbor in current_worker_neighbor:
+                send_requests.append(comm.isend(worker_grid, dest=neighbor))
+                recv_requests.append(comm.irecv(source=neighbor))
+            
+            # Wait for all communications to complete
+            MPI.Request.waitall(send_requests)
+            
+            # Get received grids
+            for i, neighbor in enumerate(current_worker_neighbor):
+                neighbor_grids[neighbor] = recv_requests[i].wait()
+        comm.Barrier()
         # fire damage increase
         if rank != 0:
             fire_increase_list = []
@@ -611,13 +653,22 @@ for _ in range(2):
                     worker_grid[loc_y][loc_x].increaseAttack()
 
         comm.Barrier()
-        
-        # if rank != 0:
-        #     for neighbor in neighbor_grids:
-        #         comm.send(worker_grid, dest=neighbor)
-        #         neighbor_grids[neighbor] = comm.recv(source=neighbor)
-        # comm.Barrier()
-        
+        if rank != 0:
+            send_requests = []
+            recv_requests = []
+            
+            # Post all sends and receives
+            for neighbor in current_worker_neighbor:
+                send_requests.append(comm.isend(worker_grid, dest=neighbor))
+                recv_requests.append(comm.irecv(source=neighbor))
+            
+            # Wait for all communications to complete
+            MPI.Request.waitall(send_requests)
+            
+            # Get received grids
+            for i, neighbor in enumerate(current_worker_neighbor):
+                neighbor_grids[neighbor] = recv_requests[i].wait()
+        comm.Barrier()
         # healing phase
         if rank != 0:
             for y in range(offset):
@@ -637,7 +688,26 @@ for _ in range(2):
         else:
             send_sub_grid(worker_grid)
         
+        if rank != 0:
+            send_requests = []
+            recv_requests = []
+            
+            # Post all sends and receives
+            for neighbor in current_worker_neighbor:
+                send_requests.append(comm.isend(worker_grid, dest=neighbor))
+                recv_requests.append(comm.irecv(source=neighbor))
+            
+            # Wait for all communications to complete
+            MPI.Request.waitall(send_requests)
+            
+            # Get received grids
+            for i, neighbor in enumerate(current_worker_neighbor):
+                neighbor_grids[neighbor] = recv_requests[i].wait()
+        comm.Barrier()
+        
+        
     # Wave ending
+    
     if rank != 0:
         for y in range(offset):
             for x in range(offset):
@@ -652,7 +722,8 @@ for _ in range(2):
                 if isinstance(worker_grid[y][x], Water):
                     flood_y, flood_x = worker_grid[y][x].flood(worker_grid, neighbor_grids)
                     neighbor, neigh_y, neigh_x = get_neigh_worker_pos(rank, worker_partitions, flood_y, flood_x)
-                    waiting_flood_data.append(neighbor)
+                    if neighbor != rank:
+                        waiting_flood_data.append(neighbor)
                     flood_queue.append((flood_y, flood_x))
 
         for neighbor in neighbor_grids:
@@ -662,6 +733,7 @@ for _ in range(2):
             waiting_flood_data += comm.recv(source=neighbor)
 
     comm.Barrier()
+    
     if rank != 0:
         for flood in flood_queue:
             if flood is not None:
@@ -682,5 +754,11 @@ for _ in range(2):
     comm.Barrier()
     if rank == 0:
         print("Wave", _ + 1, "ends", flush=True)
+
+if rank == 0:
+    recv_sub_grids(grid)
+    print_grid(grid)
+else:
+    send_sub_grid(worker_grid)
 
 file.close()
