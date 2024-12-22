@@ -66,7 +66,7 @@ class Earth(Unit):
 
     def applyDamage(self, damage):
         self.health -= int(damage * self.damageReduction)
-        damaged = 1
+        self.damaged = 1
 
 
 class Fire(Unit):
@@ -444,6 +444,7 @@ for _ in range(2):
         comm.Barrier()
 
         if rank != 0:
+
             for movement in movements:
                 y, x, new_y, new_x = movement
                 air_unit = worker_grid[y][x]
