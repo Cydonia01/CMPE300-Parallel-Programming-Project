@@ -56,17 +56,15 @@ class Earth(Unit):
     attackPower = 2
     maxHealth = 18
     healingRate = 3
-    damageReduction = 0.5
     attackPattern = [(0, 1), (1, 0), (0, -1), (-1, 0)]
 
     def __init__(self, x, y, unitName):
         super().__init__(x, y, unitName)
         self.health = 18
-        self.damaged = 0
+        self.damage_taken = 0        
 
-    def applyDamage(self, damage):
-        self.health -= int(damage * self.damageReduction)
-        self.damaged = 1
+    def applyDamage(self):
+        self.health -= self.damage_taken // 2
 
 
 class Fire(Unit):
@@ -553,27 +551,13 @@ for _ in range(2):
 
         # Resolution phase
         if rank != 0:
-            earth_damage_list = []
-            j = 0
-            while j < len(unitAttackQueue):
-                k = j + 1
-                source_y, source_x, dest_y, dest_x, damage, attacker = unitAttackQueue[j]
-                while k < len(unitAttackQueue):
-                    source2_y, source2_x, dest2_y, dest2_x, damage2, attacker2 = unitAttackQueue[k]
-                    if dest_y == dest2_y and dest_x == dest2_x:
-                        damage += damage2
-                    k += 1
-                j += 1
-                earth_damage_list.append((dest_y, dest_x, damage))
-
             for attack_instance in unitAttackQueue:
                 source_y, source_x, dest_y, dest_x, damage, attacker = attack_instance
-
                 if dest_y >= glob_index_y and dest_y < glob_index_y + offset and dest_x >= glob_index_x and dest_x < glob_index_x + offset:
                     local_y, local_x = convert_global_to_local(rank, dest_y, dest_x)
                     attacked_unit = worker_grid[local_y][local_x]
-                    if isinstance(attacked_unit, Earth) and not attacked_unit.damaged:
-                        attacked_unit.applyDamage(earth_damage_list[0][2])
+                    if isinstance(attacked_unit, Earth):
+                        attacked_unit.damage_taken += damage
                     else:
                         attacked_unit.applyDamage(damage)
                 else:
@@ -586,7 +570,20 @@ for _ in range(2):
                     source_y, source_x, dest_y, dest_x, damage, attacker = attack_instance
                     local_y, local_x = convert_global_to_local(rank, dest_y, dest_x)
                     attacked_unit = worker_grid[local_y][local_x]
-                    attacked_unit.applyDamage(damage)
+                    if isinstance(attacked_unit, Earth):
+                        attacked_unit.damage_taken += damage
+                    else:
+                        attacked_unit.applyDamage(damage)
+
+        comm.Barrier()
+        if rank != 0:
+            for y in range(offset):
+                for x in range(offset):
+                    if isinstance(worker_grid[y][x], Earth):
+                        earth_unit = worker_grid[y][x]
+                        if earth_unit.damage_taken > 0:
+                            earth_unit.applyDamage()
+                            earth_unit.damage_taken = 0
 
         comm.Barrier()
         if rank != 0:
