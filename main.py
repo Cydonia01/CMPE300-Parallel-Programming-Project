@@ -255,7 +255,7 @@ def recv_sub_grids(grid):
             for x in range(start_index_x, start_index_x + offset):
                 grid[y][x] = sub_grid[y - start_index_y][x - start_index_x]
 
-def find_neighbors(worker_grid):
+def find_neighbors():
     neighbors = []
     current_worker = rank
     for neighbor_worker, neighbor_partition in worker_partitions.items():
@@ -273,7 +273,7 @@ def convert_global_to_local(worker, y, x):
     start_y, start_x, offset = worker_partitions[worker]
     return y - start_y, x - start_x
 
-def get_neigh_worker_pos(worker, worker_partitions, glob_y, glob_x):
+def get_neigh_worker_pos(worker_partitions, glob_y, glob_x):
     for neighbor, partition in worker_partitions.items():
         start_y, start_x, offset = partition
         if glob_y >= start_y and glob_y < start_y + offset and glob_x >= start_x and glob_x < start_x + offset:
@@ -297,7 +297,7 @@ def fill_waiting_data(movements):
         y, x, new_y, new_x = movement
         if new_y < 0 or new_y >= offset or new_x < 0 or new_x >= offset:
             glob_y, glob_x = convert_local_to_global(rank, new_y, new_x)
-            neighbor, neigh_y, neigh_x = get_neigh_worker_pos(rank, worker_partitions, glob_y, glob_x)
+            neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, glob_y, glob_x)
             waiting_data.append(neighbor)
     return waiting_data
 
@@ -315,6 +315,12 @@ def get_cell2(glob_y, glob_x, worker_partitions, worker_grid, neighbor_grid):
                 return neighbor_grid[worker][local_y][local_x]
 
     return None
+
+def synchronize():
+    for neighbor in current_worker_neighbor:
+        comm.send(worker_grid, dest=neighbor)
+        neighbor_grid = comm.recv(source=neighbor)
+        neighbor_grids[neighbor] = neighbor_grid
 
 # Read the parameters from the file
 file = open("input1.txt")
@@ -407,30 +413,26 @@ for _ in range(2):
         # print_grid(worker_grid)
 
     comm.Barrier()
+    if rank == 0:
+        recv_sub_grids(grid)
+        print("Wave", _ + 1, "starts", flush=True)
+        print_grid(grid)
+
+    else:
+        send_sub_grid(worker_grid)
+    comm.Barrier()
 
     for i in range(4):
         # Movement phase
         waiting_data = []
         if rank != 0:
             # send current grid to neighbors
-            current_worker_neighbor = find_neighbors(worker_grid)
+            current_worker_neighbor = find_neighbors()
             neighbor_grids = {}
-
-            send_requests = []
-            recv_requests = []
+            synchronize()
             
-            # Post all sends and receives
-            for neighbor in current_worker_neighbor:
-                send_requests.append(comm.isend(worker_grid, dest=neighbor))
-                recv_requests.append(comm.irecv(source=neighbor))
-            
-            # Wait for all communications to complete
-            MPI.Request.waitall(send_requests)
-            
-            # Get received grids
-            for i, neighbor in enumerate(current_worker_neighbor):
-                neighbor_grids[neighbor] = recv_requests[i].wait()
-
+        comm.Barrier()
+        if rank != 0:
             movements = compute_movements(worker_grid, neighbor_grids)
             waiting_data = fill_waiting_data(movements)
 
@@ -446,8 +448,8 @@ for _ in range(2):
             for movement in movements:
                 y, x, new_y, new_x = movement
                 air_unit = worker_grid[y][x]
-                next_pos = worker_grid[new_y][new_x]
                 if new_y >= 0 and new_y < offset and new_x >= 0 and new_x < offset:
+                    next_pos = worker_grid[new_y][new_x]
                     if y == new_y and x == new_x:
                         continue
                     elif next_pos == ".":
@@ -461,7 +463,7 @@ for _ in range(2):
                         worker_grid[y][x] = "."
                 else:
                     glob_new_y, glob_new_x = convert_local_to_global(rank, new_y, new_x)
-                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(rank, worker_partitions, glob_new_y, glob_new_x)
+                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, glob_new_y, glob_new_x)
                     if neighbor != rank:
                         comm.send((air_unit, glob_new_y, glob_new_x), dest=neighbor)
                     worker_grid[y][x] = "."
@@ -482,20 +484,7 @@ for _ in range(2):
                         next_pos.attackPower += air_unit.attackPower
         comm.Barrier()
         if rank != 0:
-            send_requests = []
-            recv_requests = []
-            
-            # Post all sends and receives
-            for neighbor in current_worker_neighbor:
-                send_requests.append(comm.isend(worker_grid, dest=neighbor))
-                recv_requests.append(comm.irecv(source=neighbor))
-            
-            # Wait for all communications to complete
-            MPI.Request.waitall(send_requests)
-            
-            # Get received grids
-            for i, neighbor in enumerate(current_worker_neighbor):
-                neighbor_grids[neighbor] = recv_requests[i].wait()
+            synchronize()
             
         comm.Barrier()
         # Attack phase
@@ -520,7 +509,7 @@ for _ in range(2):
                 if dest_y >= glob_index_y and dest_y < glob_index_y + offset and dest_x >= glob_index_x and dest_x < glob_index_x + offset:
                     pass
                 else:
-                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(rank, worker_partitions, dest_y, dest_x)
+                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, dest_y, dest_x)
                     waiting_attack_data.append(neighbor)
 
             for neighbor_2 in neighbor_grids:
@@ -533,20 +522,7 @@ for _ in range(2):
             
         comm.Barrier()
         if rank != 0:
-            send_requests = []
-            recv_requests = []
-            
-            # Post all sends and receives
-            for neighbor in current_worker_neighbor:
-                send_requests.append(comm.isend(worker_grid, dest=neighbor))
-                recv_requests.append(comm.irecv(source=neighbor))
-            
-            # Wait for all communications to complete
-            MPI.Request.waitall(send_requests)
-            
-            # Get received grids
-            for i, neighbor in enumerate(current_worker_neighbor):
-                neighbor_grids[neighbor] = recv_requests[i].wait()
+            synchronize()
         comm.Barrier()
 
         # Resolution phase
@@ -561,7 +537,7 @@ for _ in range(2):
                     else:
                         attacked_unit.applyDamage(damage)
                 else:
-                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(rank, worker_partitions, dest_y, dest_x)
+                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, dest_y, dest_x)
                     comm.send(attack_instance, dest=neighbor)
 
             for waiting_rank in waiting_attack_data:
@@ -587,20 +563,7 @@ for _ in range(2):
 
         comm.Barrier()
         if rank != 0:
-            send_requests = []
-            recv_requests = []
-            
-            # Post all sends and receives
-            for neighbor in current_worker_neighbor:
-                send_requests.append(comm.isend(worker_grid, dest=neighbor))
-                recv_requests.append(comm.irecv(source=neighbor))
-            
-            # Wait for all communications to complete
-            MPI.Request.waitall(send_requests)
-            
-            # Get received grids
-            for i, neighbor in enumerate(current_worker_neighbor):
-                neighbor_grids[neighbor] = recv_requests[i].wait()
+            synchronize()
         comm.Barrier()
         # fire damage increase
         if rank != 0:
@@ -618,7 +581,7 @@ for _ in range(2):
                         if isinstance(attacker_unit, Fire):
                             attacker_unit.increaseAttack()
                 else:
-                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(rank, worker_partitions, dest_y, dest_x)
+                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, dest_y, dest_x)
                     comm.send(attack_instance, dest=neighbor)
 
             for waiting_rank in waiting_attack_data:
@@ -632,7 +595,7 @@ for _ in range(2):
                     if attacked_unit != "." and attacked_unit.health <= 0:
                         worker_grid[local_y][local_x] = "."
                         if attacker == "Fire":
-                            neighbor, neigh_y, neigh_x = get_neigh_worker_pos(rank, worker_partitions, source_y, source_x)
+                            neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, source_y, source_x)
                             attacker_unit = get_cell2(source_y, source_x, worker_partitions, worker_grid, neighbor_grids)
                             fire_increase_list.append((neighbor, neigh_y, neigh_x))
         comm.Barrier()
@@ -652,20 +615,7 @@ for _ in range(2):
 
         comm.Barrier()
         if rank != 0:
-            send_requests = []
-            recv_requests = []
-            
-            # Post all sends and receives
-            for neighbor in current_worker_neighbor:
-                send_requests.append(comm.isend(worker_grid, dest=neighbor))
-                recv_requests.append(comm.irecv(source=neighbor))
-            
-            # Wait for all communications to complete
-            MPI.Request.waitall(send_requests)
-            
-            # Get received grids
-            for i, neighbor in enumerate(current_worker_neighbor):
-                neighbor_grids[neighbor] = recv_requests[i].wait()
+            synchronize()
         comm.Barrier()
         # healing phase
         if rank != 0:
@@ -687,20 +637,7 @@ for _ in range(2):
             send_sub_grid(worker_grid)
         
         if rank != 0:
-            send_requests = []
-            recv_requests = []
-            
-            # Post all sends and receives
-            for neighbor in current_worker_neighbor:
-                send_requests.append(comm.isend(worker_grid, dest=neighbor))
-                recv_requests.append(comm.irecv(source=neighbor))
-            
-            # Wait for all communications to complete
-            MPI.Request.waitall(send_requests)
-            
-            # Get received grids
-            for i, neighbor in enumerate(current_worker_neighbor):
-                neighbor_grids[neighbor] = recv_requests[i].wait()
+            synchronize()
         comm.Barrier()
         
         
@@ -719,7 +656,7 @@ for _ in range(2):
             for x in range(offset):
                 if isinstance(worker_grid[y][x], Water):
                     flood_y, flood_x = worker_grid[y][x].flood(worker_grid, neighbor_grids)
-                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(rank, worker_partitions, flood_y, flood_x)
+                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, flood_y, flood_x)
                     if neighbor != rank:
                         waiting_flood_data.append(neighbor)
                     flood_queue.append((flood_y, flood_x))
@@ -741,7 +678,7 @@ for _ in range(2):
                     local_y, local_x = convert_global_to_local(rank, y, x)
                     worker_grid[local_y][local_x] = Water(local_x, local_y, "Water")
                 else:
-                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(rank, worker_partitions, y, x)
+                    neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, y, x)
                     comm.send((neigh_y, neigh_x), dest=neighbor)
 
         for worker in waiting_flood_data:
@@ -750,13 +687,15 @@ for _ in range(2):
                 worker_grid[neigh_y][neigh_x] = Water(neigh_x, neigh_y, "Water")
 
     comm.Barrier()
+    if rank != 0:
+        synchronize()
+    comm.Barrier()
     if rank == 0:
+        recv_sub_grids(grid)
         print("Wave", _ + 1, "ends", flush=True)
+        print_grid(grid)
 
-if rank == 0:
-    recv_sub_grids(grid)
-    print_grid(grid)
-else:
-    send_sub_grid(worker_grid)
+    else:
+        send_sub_grid(worker_grid)
 
 file.close()
