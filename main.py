@@ -1,4 +1,5 @@
 import math
+import sys
 from mpi4py import MPI
 
 # superclass for all units
@@ -9,6 +10,7 @@ class Unit:
         self.healing = 0
         self.unitName = unitName
 
+    # returns the list of attack instances. attack instances are tuples of (source_y, source_x, dest_y, dest_x, damage, attacker)
     def attack(self, worker_grid, neighbor_grids):
         target_positions = []
         glob_y = self.y + glob_index_y
@@ -17,7 +19,7 @@ class Unit:
         for direction in self.attackPattern:
             target_y = glob_y + direction[0]
             target_x = glob_x + direction[1]
-            cell = self.get_cell(target_y, target_x, worker_partitions, worker_grid, neighbor_grids)
+            cell = get_cell(target_y, target_x, worker_partitions, worker_grid, neighbor_grids)
 
             if cell is None:
                 continue
@@ -35,24 +37,8 @@ class Unit:
         self.health = min(self.health + self.healingRate, self.maxHealth)
         self.healing = 0
 
-    def get_cell(self, glob_y, glob_x, worker_partitions, worker_grid, neighbor_grid):
-        if glob_y < 0 or glob_y >= N or glob_x < 0 or glob_x >= N:
-            return None
-
-        for worker, (start_y, start_x, offset) in worker_partitions.items():
-            if glob_y >= start_y and glob_y < start_y + offset and glob_x >= start_x and glob_x < start_x + offset:
-                local_y = glob_y - start_y
-                local_x = glob_x - start_x
-                if worker == rank:
-                    return worker_grid[local_y][local_x]
-                else:
-                    return neighbor_grid[worker][local_y][local_x]
-
-        return None
-
 
 class Earth(Unit):
-    # constants
     attackPower = 2
     maxHealth = 18
     healingRate = 3
@@ -68,7 +54,6 @@ class Earth(Unit):
 
 
 class Fire(Unit):
-    # constants
     maxAttackPower = 6
     maxHealth = 12
     healingRate = 1
@@ -87,17 +72,17 @@ class Fire(Unit):
 
 
 class Water(Unit):
-    # constants
     attackPower = 3
     maxHealth = 14
     healingRate = 2
     attackPattern = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
-    adjacentCells = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, -1)]
+    adjacentCells = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
     def __init__(self, x, y, unitName):
         super().__init__(x, y, unitName)
         self.health = 14
 
+    # return the global coordinates of the cell that can be flooded
     def flood(self, worker_grid, neighbor_grids):
         glob_y = self.y + glob_index_y
         glob_x = self.x + glob_index_x
@@ -105,7 +90,7 @@ class Water(Unit):
         for direction in self.adjacentCells:
             target_y = glob_y + direction[0]
             target_x = glob_x + direction[1]
-            cell = self.get_cell(target_y, target_x, worker_partitions, worker_grid, neighbor_grids)
+            cell = get_cell(target_y, target_x, worker_partitions, worker_grid, neighbor_grids)
             if cell is None:
                 continue
             elif cell == ".":
@@ -124,7 +109,7 @@ class Air(Unit):
         self.health = 10
 
 
-    # returns the coordinates of the units that can be attacked. Also, it is used for counting the number of attackable units
+    # returns the coordinates of the units that can be attacked
     def attack(self, worker_grid, neighbor_grids):
         target_positions = []
         glob_y = self.y + glob_index_y
@@ -136,8 +121,9 @@ class Air(Unit):
 
             skipped = 0
             max_skip = 1
+            # check the two cells in the direction
             for _ in range(2):
-                cell = self.get_cell(target_y, target_x, worker_partitions, worker_grid, neighbor_grids)
+                cell = get_cell(target_y, target_x, worker_partitions, worker_grid, neighbor_grids)
                 if cell is None:
                     break
 
@@ -154,6 +140,7 @@ class Air(Unit):
                     break
         return target_positions
 
+    # returns the coordinates of the next position
     def move(self, worker_grid, neighbor_grids):
         current_glob_y = self.y + glob_index_y
         current_glob_x = self.x + glob_index_x
@@ -164,7 +151,7 @@ class Air(Unit):
             test_glob_y = current_glob_y + direction[0]
             test_glob_x = current_glob_x + direction[1]
 
-            cell = self.get_cell(test_glob_y, test_glob_x, worker_partitions, worker_grid, neighbor_grids)
+            cell = get_cell(test_glob_y, test_glob_x, worker_partitions, worker_grid, neighbor_grids)
 
             if cell == ".":
                 test_y = test_glob_y - glob_index_y
@@ -177,7 +164,8 @@ class Air(Unit):
         next_y = sorted_new_positions[0][1]
         next_x = sorted_new_positions[0][2]
         return next_y, next_x
-
+    
+    # returns the number of units that can be attacked from the current position
     def count_attackable_units(self, worker_grid, neighbor_grids, y, x):
         glob_y = y + glob_index_y
         glob_x = x + glob_index_x
@@ -189,8 +177,9 @@ class Air(Unit):
 
             skipped = 0
             max_skip = 1
+            # check the two cells in the direction
             for _ in range(2):
-                cell = self.get_cell(new_y, new_x, worker_partitions, worker_grid, neighbor_grids)
+                cell = get_cell(new_y, new_x, worker_partitions, worker_grid, neighbor_grids)
                 if cell is None:
                     break
 
@@ -207,8 +196,7 @@ class Air(Unit):
                     break
         return num_units
 
-# Read a wave from the file and update the grid
-#!!! clean at the end!!!
+# Read a wave from the file and update the grid. Returns the unit data list. 
 def read_wave(file):
     line = file.readline()
     unit_data = []
@@ -216,17 +204,17 @@ def read_wave(file):
         line = file.readline()
         positions = line.split(":")[1].split(",")
         for position in positions:
-            y = int(position[1])
-            x = int(position[3])
+            position = position.strip().split()
+            y = int(position[0])
+            x = int(position[1])
             unit_data.append((line[0], y, x))
     return unit_data
 
+# Prints the grid
 def print_grid(grid):
     for y in range(len(grid)):
         for x in range(len(grid[y])):
             if grid[y][x] != ".":
-                # print(grid[y][x].health, end=" ")
-                # continue
                 if isinstance(grid[y][x], Earth):
                     print("E", end=" ")
                 elif isinstance(grid[y][x], Fire):
@@ -239,14 +227,14 @@ def print_grid(grid):
                 print(".", end=" ")
         print()
 
-
+# Sends the subgrid to the master
 def send_sub_grid(worker_grid):
     sub_grid = []
     for y in range(offset):
         sub_grid.append(worker_grid[y])
     comm.send(sub_grid, dest=0)
 
-
+# Receives the subgrids from the workers
 def recv_sub_grids(grid):
     for worker_rank in range(1, num_workers + 1):
         sub_grid = comm.recv(source=worker_rank)
@@ -255,6 +243,7 @@ def recv_sub_grids(grid):
             for x in range(start_index_x, start_index_x + offset):
                 grid[y][x] = sub_grid[y - start_index_y][x - start_index_x]
 
+# Returns the neighbors of the current worker
 def find_neighbors():
     neighbors = []
     current_worker = rank
@@ -265,14 +254,20 @@ def find_neighbors():
             neighbors.append(neighbor_worker)
     return neighbors
 
+
+# converts local coordinates to global coordinates
 def convert_local_to_global(worker, y, x):
     start_y, start_x, offset = worker_partitions[worker]
     return start_y + y, start_x + x
 
+
+# converts global coordinates to local coordinates
 def convert_global_to_local(worker, y, x):
     start_y, start_x, offset = worker_partitions[worker]
     return y - start_y, x - start_x
 
+
+# returns the neighboring worker and local coordinates of the global coordinates according to the global positions
 def get_neigh_worker_pos(worker_partitions, glob_y, glob_x):
     for neighbor, partition in worker_partitions.items():
         start_y, start_x, offset = partition
@@ -281,6 +276,8 @@ def get_neigh_worker_pos(worker_partitions, glob_y, glob_x):
             local_x = glob_x - start_x
             return neighbor, local_y, local_x
 
+
+# returns movement instance list. Each instance is a tuple of (y, x, new_y, new_x)
 def compute_movements(worker_grid, neighbor_grids):
     movements = []
     for y in range(offset):
@@ -291,6 +288,8 @@ def compute_movements(worker_grid, neighbor_grids):
                 movements.append((y, x, new_y, new_x))
     return movements
 
+
+# returns the list of workers that are waiting data
 def fill_waiting_data(movements):
     waiting_data = []
     for movement in movements:
@@ -301,7 +300,9 @@ def fill_waiting_data(movements):
             waiting_data.append(neighbor)
     return waiting_data
 
-def get_cell2(glob_y, glob_x, worker_partitions, worker_grid, neighbor_grid):
+
+# returns the cell using global coordinates. It finds which subgrid the cell belongs to and returns the cell
+def get_cell(glob_y, glob_x, worker_partitions, worker_grid, neighbor_grid):
     if glob_y < 0 or glob_y >= N or glob_x < 0 or glob_x >= N:
         return None
 
@@ -316,14 +317,31 @@ def get_cell2(glob_y, glob_x, worker_partitions, worker_grid, neighbor_grid):
 
     return None
 
+
+# Synchronizes the worker grids
 def synchronize():
     for neighbor in current_worker_neighbor:
         comm.send(worker_grid, dest=neighbor)
         neighbor_grid = comm.recv(source=neighbor)
         neighbor_grids[neighbor] = neighbor_grid
 
+
+# returns the character representation of the cell
+def get_char(cell):
+    if cell == ".":
+        return "."
+    elif isinstance(cell, Earth):
+        return "E"
+    elif isinstance(cell, Fire):
+        return "F"
+    elif isinstance(cell, Water):
+        return "W"
+    elif isinstance(cell, Air):
+        return "A"
+
 # Read the parameters from the file
-file = open("input1.txt")
+args = sys.argv[1:]
+file = open(args[0], "r")
 parameters = file.readline().split()
 N = int(parameters[0]) # Grid Size
 W = int(parameters[1]) # Number of Waves
@@ -343,10 +361,10 @@ size_per_rank = int(N // math.sqrt(num_workers))
 worker_partitions = {}
 workers_per_row = int(math.sqrt(num_workers))
 
-# checkered partitioning
 if rank == 0:
     grid = [["." for _ in range(N)] for _ in range(N)]
 
+    # checkered partitioning. send the sub grids to the workers
     for worker_rank in range(1, num_workers + 1):
         start_index_y = size_per_rank * ((worker_rank - 1) // int(math.sqrt(num_workers)))
         start_index_x = size_per_rank * ((worker_rank - 1) % int(math.sqrt(num_workers)))
@@ -362,21 +380,21 @@ if rank == 0:
 
         comm.send(global_indexes, dest=worker_rank, tag=2)
 
-
+    # send the partitions indices to the workers
     for worker_rank in range(1, num_workers + 1):
         comm.send(worker_partitions, dest=worker_rank, tag=3)
 
 else:
+    # receive the partitions and the global indexes
     worker_grid = comm.recv(source=0, tag=1)
     global_indexes = comm.recv(source=0, tag=2)
     worker_partitions = comm.recv(source=0, tag=3)
     glob_index_y, glob_index_x, offset = global_indexes
-    # print("rank", rank, "received", worker_partitions, worker_grid, global_indexes)
 
-for _ in range(2):
+for _ in range(W):
     if rank == 0:
         unit_data = read_wave(file)
-
+        # send the unit data to the workers
         for worker, partition in worker_partitions.items():
             worker_y, worker_x, offset = partition
             worker_unit_partition = []
@@ -388,8 +406,6 @@ for _ in range(2):
             comm.send(worker_unit_partition, dest=worker, tag=4)
     else:
         unit_data = comm.recv(source=0, tag=4)
-
-        # print("Rank", rank, "received", unit_data)
 
     comm.Barrier()
 
@@ -409,20 +425,9 @@ for _ in range(2):
                 elif unit_type == "A":
                     worker_grid[local_y][local_x] = Air(local_x, local_y, "Air")
 
-        # print("Rank", rank, "updated grid")
-        # print_grid(worker_grid)
-
-    comm.Barrier()
-    if rank == 0:
-        recv_sub_grids(grid)
-        print("Wave", _ + 1, "starts", flush=True)
-        print_grid(grid)
-
-    else:
-        send_sub_grid(worker_grid)
     comm.Barrier()
 
-    for i in range(4):
+    for i in range(R):
         # Movement phase
         waiting_data = []
         if rank != 0:
@@ -433,6 +438,7 @@ for _ in range(2):
             
         comm.Barrier()
         if rank != 0:
+            # compute movements
             movements = compute_movements(worker_grid, neighbor_grids)
             waiting_data = fill_waiting_data(movements)
 
@@ -444,10 +450,11 @@ for _ in range(2):
         comm.Barrier()
 
         if rank != 0:
-
+            # resolve movements
             for movement in movements:
                 y, x, new_y, new_x = movement
                 air_unit = worker_grid[y][x]
+                # check if the new position is in the current worker's grid
                 if new_y >= 0 and new_y < offset and new_x >= 0 and new_x < offset:
                     next_pos = worker_grid[new_y][new_x]
                     if y == new_y and x == new_x:
@@ -462,12 +469,14 @@ for _ in range(2):
                         next_pos.attackPower += air_unit.attackPower
                         worker_grid[y][x] = "."
                 else:
+                    # send the air unit to the neighbor
                     glob_new_y, glob_new_x = convert_local_to_global(rank, new_y, new_x)
                     neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, glob_new_y, glob_new_x)
                     if neighbor != rank:
                         comm.send((air_unit, glob_new_y, glob_new_x), dest=neighbor)
                     worker_grid[y][x] = "."
 
+            # receive the air units from the neighbors
             for waiting_rank in waiting_data:
                 if waiting_rank == rank:
                     air_unit, global_y, global_x = comm.recv(source=MPI.ANY_SOURCE)
@@ -483,13 +492,16 @@ for _ in range(2):
                         next_pos.health = min(next_pos.health + air_unit.health, 10)
                         next_pos.attackPower += air_unit.attackPower
         comm.Barrier()
+        
         if rank != 0:
             synchronize()
             
         comm.Barrier()
+        
         # Attack phase
         if rank != 0:
             unitAttackQueue = []
+            # made decisions for the units
             for y in range(offset):
                 for x in range(offset):
                     if worker_grid[y][x] != ".":
@@ -503,6 +515,7 @@ for _ in range(2):
                         else:
                             unitAttackQueue += temp
 
+            # determine the workers that are waiting attack instance data
             waiting_attack_data = []
             for attack_instance in unitAttackQueue:
                 source_y, source_x, dest_y, dest_x, damage, attacker = attack_instance
@@ -517,18 +530,20 @@ for _ in range(2):
 
             for neighbor_2 in neighbor_grids:
                 waiting_attack_data += comm.recv(source=neighbor_2)
-            # print("Rank", rank, "attack queue")
-            # print(unitAttackQueue)
             
         comm.Barrier()
+        
         if rank != 0:
             synchronize()
+        
         comm.Barrier()
 
         # Resolution phase
         if rank != 0:
+            # resolve the attack instances
             for attack_instance in unitAttackQueue:
                 source_y, source_x, dest_y, dest_x, damage, attacker = attack_instance
+                # check if the attacked unit is in the current worker's grid
                 if dest_y >= glob_index_y and dest_y < glob_index_y + offset and dest_x >= glob_index_x and dest_x < glob_index_x + offset:
                     local_y, local_x = convert_global_to_local(rank, dest_y, dest_x)
                     attacked_unit = worker_grid[local_y][local_x]
@@ -540,6 +555,7 @@ for _ in range(2):
                     neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, dest_y, dest_x)
                     comm.send(attack_instance, dest=neighbor)
 
+            # receive the attack instances from the neighbors
             for waiting_rank in waiting_attack_data:
                 if waiting_rank == rank:
                     attack_instance = comm.recv(source=MPI.ANY_SOURCE)
@@ -552,6 +568,7 @@ for _ in range(2):
                         attacked_unit.applyDamage(damage)
 
         comm.Barrier()
+        # apply the damage to the earth units
         if rank != 0:
             for y in range(offset):
                 for x in range(offset):
@@ -562,15 +579,19 @@ for _ in range(2):
                             earth_unit.damage_taken = 0
 
         comm.Barrier()
+
         if rank != 0:
             synchronize()
+
         comm.Barrier()
-        # fire damage increase
+
+        # Inrease the attack power of fire units
         if rank != 0:
             fire_increase_list = []
             for attack_instance in unitAttackQueue:
                 source_y, source_x, dest_y, dest_x, damage, attacker = attack_instance
                 
+                # check if the attacked unit is in the current worker's grid
                 if dest_y >= glob_index_y and dest_y < glob_index_y + offset and dest_x >= glob_index_x and dest_x < glob_index_x + offset:
                     local_y, local_x = convert_global_to_local(rank, dest_y, dest_x)
                     attacked_unit = worker_grid[local_y][local_x]
@@ -581,9 +602,11 @@ for _ in range(2):
                         if isinstance(attacker_unit, Fire):
                             attacker_unit.increaseAttack()
                 else:
+                    # send the attack instance to the neighbor
                     neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, dest_y, dest_x)
                     comm.send(attack_instance, dest=neighbor)
 
+            # receive the attack instances from the neighbors
             for waiting_rank in waiting_attack_data:
                 if waiting_rank == rank:
                     attack_instance = comm.recv(source=MPI.ANY_SOURCE)
@@ -592,13 +615,16 @@ for _ in range(2):
 
                     attacked_unit = worker_grid[local_y][local_x]
                     
+                    # check if the attacked unit is in the current worker's grid
                     if attacked_unit != "." and attacked_unit.health <= 0:
                         worker_grid[local_y][local_x] = "."
                         if attacker == "Fire":
                             neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, source_y, source_x)
-                            attacker_unit = get_cell2(source_y, source_x, worker_partitions, worker_grid, neighbor_grids)
+                            attacker_unit = get_cell(source_y, source_x, worker_partitions, worker_grid, neighbor_grids)
                             fire_increase_list.append((neighbor, neigh_y, neigh_x))
         comm.Barrier()
+        
+        # send the fire increase list to the neighbors
         if rank != 0:
             for neighbor in neighbor_grids:
                 comm.send(fire_increase_list, dest=neighbor)
@@ -607,16 +633,21 @@ for _ in range(2):
             
         comm.Barrier()
 
+        # increase the attack power of the fire units
         if rank != 0:
             for increase_instance in fire_increase_list:
                 worker_num, loc_y, loc_x = increase_instance
                 if worker_num == rank:
                     worker_grid[loc_y][loc_x].increaseAttack()
+            
 
         comm.Barrier()
+        
         if rank != 0:
             synchronize()
+        
         comm.Barrier()
+        
         # healing phase
         if rank != 0:
             for y in range(offset):
@@ -625,31 +656,23 @@ for _ in range(2):
                         unit = worker_grid[y][x]
                         if unit.healing == 1:
                             unit.heal()
-
-        comm.Barrier()
         
-        if rank == 0:
-            pass
-            recv_sub_grids(grid)
-            print("Round", i + 1, "ends")
-            print_grid(grid)
-        else:
-            send_sub_grid(worker_grid)
+        comm.Barrier()
         
         if rank != 0:
             synchronize()
+            
         comm.Barrier()
         
-        
     # Wave ending
-    
     if rank != 0:
+        # reset the attack power of the fire units
         for y in range(offset):
             for x in range(offset):
                 if isinstance(worker_grid[y][x], Fire):
                     worker_grid[y][x].resetAttack()
-                if isinstance(worker_grid[y][x], Earth):
-                    worker_grid[y][x].damaged = 0
+                    
+        # compute flooding cells
         flood_queue = []
         waiting_flood_data = []
         for y in range(offset):
@@ -661,41 +684,56 @@ for _ in range(2):
                         waiting_flood_data.append(neighbor)
                     flood_queue.append((flood_y, flood_x))
 
+        # send the flood queue to the neighbors
         for neighbor in neighbor_grids:
             comm.send(waiting_flood_data, dest=neighbor)
 
+        # receive the flood queue from the neighbors
         for neighbor in neighbor_grids:
             waiting_flood_data += comm.recv(source=neighbor)
 
     comm.Barrier()
     
     if rank != 0:
+        # resolve the flooding cells
         for flood in flood_queue:
             if flood is not None:
                 y, x = flood
-
+                # check if the flooded cell is in the current worker's grid
                 if y >= glob_index_y and y < glob_index_y + offset and x >= glob_index_x and x < glob_index_x + offset:
                     local_y, local_x = convert_global_to_local(rank, y, x)
                     worker_grid[local_y][local_x] = Water(local_x, local_y, "Water")
                 else:
+                    # send the flood cell to the neighbor
                     neighbor, neigh_y, neigh_x = get_neigh_worker_pos(worker_partitions, y, x)
                     comm.send((neigh_y, neigh_x), dest=neighbor)
-
+    
+        # receive the flood cells from the neighbors
         for worker in waiting_flood_data:
             if worker == rank:
                 neigh_y, neigh_x = comm.recv(source=MPI.ANY_SOURCE)
                 worker_grid[neigh_y][neigh_x] = Water(neigh_x, neigh_y, "Water")
 
     comm.Barrier()
+    
     if rank != 0:
         synchronize()
+        
     comm.Barrier()
+    
+    # send the subgrid to the master and receive the subgrids from the workers
     if rank == 0:
         recv_sub_grids(grid)
-        print("Wave", _ + 1, "ends", flush=True)
-        print_grid(grid)
-
     else:
         send_sub_grid(worker_grid)
 
+# write the final grid to the file
+if rank == 0:
+    with open(args[1], "w") as f:
+        for y in range(len(grid)):
+            row = []
+            for x in range(len(grid[y])):
+                row.append(get_char(grid[y][x]))
+            f.write(" ".join(row) + "\n")
+    f.close()
 file.close()
